@@ -43,8 +43,10 @@
     padding: 14px 40px; border-radius: 999px; background: #e8447a; color: #fff;
     font-size: 20px; font-weight: 700; box-shadow: 0 4px 0 #a52a55;
   }
-  #start .status { font-size: 13px; opacity: .7; min-height: 1em; }
+  #start .status { font-size: 14px; opacity: .8; min-height: 1em; direction: rtl; }
   #start.ready .status { opacity: 0; }
+  #start:not(.ready) .play { opacity: .55; }
+  #start.waiting .play { display: none; }
   @media (max-height: 420px) {
     #start { gap: 10px; }
     #start img { width: 84px; height: 84px; border-radius: 20px; }
@@ -148,18 +150,44 @@
   const player = window.RufflePlayer.newest().createPlayer();
   $("stage").appendChild(player);
 
+  // Download with a progress readout — archive.org can be slow on the first visit
+  async function download(url, onProgress) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(res.status);
+    const total = +res.headers.get("content-length") || 1771296;
+    if (!res.body || !res.body.getReader) return res.arrayBuffer();
+    const reader = res.body.getReader();
+    const chunks = [];
+    let got = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      got += value.length;
+      onProgress(Math.min(99, Math.floor((got / total) * 100)));
+    }
+    const data = new Uint8Array(got);
+    let off = 0;
+    for (const c of chunks) { data.set(c, off); off += c.length; }
+    return data.buffer;
+  }
+
+  let gameReady = false;
+  let startRequested = false;
   async function loadGame() {
+    const status = $("status");
     for (const url of SWF_URLS) {
       try {
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(res.status);
-        const data = await res.arrayBuffer();
+        const data = await download(url, (pct) => { status.textContent = "טוען את המשחק… " + pct + "%"; });
+        status.textContent = "מכין את המשחק…";
         await player.ruffle().load({ data, swfFileName: "brain_game.swf" });
+        gameReady = true;
         start.classList.add("ready");
+        if (startRequested) enterGame();
         return;
       } catch (e) { console.warn("Could not load", url, e); }
     }
-    $("status").textContent = "שגיאה בטעינת המשחק — בדקו את החיבור לאינטרנט";
+    status.textContent = "שגיאה בטעינת המשחק — בדקו את החיבור לאינטרנט ורעננו";
   }
   loadGame();
 
@@ -179,13 +207,21 @@
   document.addEventListener("fullscreenchange", () =>
     document.body.classList.toggle("is-fs", !!document.fullscreenElement));
 
-  start.addEventListener("click", () => {
-    goFullscreen();
-    keepAwake();
+  // Tapping Play before the game has loaded goes fullscreen right away (needs the tap)
+  // and keeps the loading screen up until the game is ready.
+  function enterGame() {
     start.remove();
     document.body.classList.add("started");
     player.focus();
-  }, { once: true });
+  }
+  start.addEventListener("click", () => {
+    if (startRequested) return;
+    startRequested = true;
+    goFullscreen();
+    keepAwake();
+    if (gameReady) enterGame();
+    else start.classList.add("waiting");
+  });
   $("btn-fs").addEventListener("click", goFullscreen);
 
   // ---------- Toast ----------

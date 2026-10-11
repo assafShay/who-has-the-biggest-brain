@@ -1,18 +1,15 @@
-// Caches the app so it works offline once it has been opened.
-const CACHE = "whtbb-v3";
+// Offline support. Only the small shell is cached up front; everything else
+// (the Ruffle engine actually used by this device, and the game file from archive.org)
+// is cached the first time it loads, so later visits start instantly.
+const CACHE = "whtbb-v4";
 const SHELL = [
   "./",
   "index.html",
   "manifest.webmanifest",
   "icon-192.png",
   "icon-512.png",
-  "172de42e6619eac8f371.wasm",
-  "878d548199cddef07035.wasm",
-  "core.ruffle.16d61072ac7fdc4d5013.js",
-  "core.ruffle.994eeef0a471a88cd0e3.js",
   "ruffle.js",
 ];
-// The game file itself comes from the Internet Archive and is cached on first play.
 const GAME_URL = "https://archive.org/cors/whtbb/brain_game_2_6_7_translated_v1.swf";
 
 self.addEventListener("install", (e) => {
@@ -27,22 +24,29 @@ self.addEventListener("activate", (e) => {
   );
 });
 
+function put(req, res) {
+  if (res.ok) {
+    const copy = res.clone();
+    caches.open(CACHE).then((c) => c.put(req, copy));
+  }
+  return res;
+}
+
 self.addEventListener("fetch", (e) => {
-  if (e.request.method !== "GET") return;
-  const url = new URL(e.request.url);
+  const req = e.request;
+  if (req.method !== "GET") return;
+  const url = new URL(req.url);
   const isGame = url.href === GAME_URL;
   if (url.origin !== location.origin && !isGame) return;
 
+  // Pages: network first so updates to the site reach players; cache when offline.
+  if (req.mode === "navigate" || url.pathname.endsWith(".html")) {
+    e.respondWith(fetch(req).then((res) => put(req, res)).catch(() => caches.match(req, { ignoreSearch: true })));
+    return;
+  }
+
+  // Everything else (engine, game file, icons): cache first.
   e.respondWith(
-    caches.match(e.request, { ignoreSearch: true }).then((hit) => {
-      if (hit) return hit;
-      return fetch(e.request).then((res) => {
-        if (res.ok && (isGame || url.pathname.endsWith(".swf"))) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy));
-        }
-        return res;
-      });
-    })
+    caches.match(req, { ignoreSearch: true }).then((hit) => hit || fetch(req).then((res) => put(req, res)))
   );
 });
