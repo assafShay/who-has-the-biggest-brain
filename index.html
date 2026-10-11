@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Who Has The Biggest Brain?</title>
+<meta name="description" content="המשחק הקלאסי מפייסבוק — חוזר לטלפון. מי המוח הכי גדול?">
+<meta property="og:title" content="Who Has The Biggest Brain?">
+<meta property="og:description" content="המשחק הקלאסי מפייסבוק — חוזר לטלפון. מי המוח הכי גדול?">
+<meta property="og:image" content="icon-512.png">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root { color-scheme: dark; }
+  html, body {
+    margin: 0; height: 100%; background: #000; overflow: hidden;
+    overscroll-behavior: none; touch-action: none;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  #stage {
+    position: fixed; inset: 0;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  #stage ruffle-player { width: 100%; height: 100%; display: block; }
+
+  /* Start screen: one tap = fullscreen + landscape + audio unlock */
+  #start {
+    position: fixed; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+    background: radial-gradient(circle at 50% 40%, #2b6f73 0%, #0d2b33 60%, #050d10 100%);
+    color: #fff; text-align: center; cursor: pointer;
+  }
+  #start img { width: 120px; height: 120px; border-radius: 28px; box-shadow: 0 8px 30px rgba(0,0,0,.5); }
+  #start h1 { margin: 0; font-size: 22px; line-height: 1.2; letter-spacing: .5px; direction: ltr; }
+  #start .play {
+    padding: 14px 40px; border-radius: 999px; background: #e8447a; color: #fff;
+    font-size: 20px; font-weight: 700; box-shadow: 0 4px 0 #a52a55;
+  }
+  #start .status { font-size: 13px; opacity: .7; min-height: 1em; }
+  #start.ready .status { opacity: 0; }
+  @media (max-height: 420px) {
+    #start { gap: 10px; }
+    #start img { width: 84px; height: 84px; border-radius: 20px; }
+  }
+
+  /* Toolbar: screenshot / share / fullscreen.
+     Sits in the black side bar in landscape, under the game in portrait. */
+  #tools {
+    position: fixed; z-index: 5; display: none; flex-direction: column; gap: 10px;
+    bottom: calc(10px + env(safe-area-inset-bottom)); left: calc(10px + env(safe-area-inset-left));
+  }
+  body.started #tools { display: flex; }
+  @media (orientation: portrait) { #tools { flex-direction: row; left: 50%; transform: translateX(-50%); } }
+  #tools button {
+    width: 44px; height: 44px; padding: 0; border: 0; border-radius: 12px;
+    background: rgba(255,255,255,.14); color: #fff; display: grid; place-items: center; cursor: pointer;
+  }
+  #tools button:active { background: rgba(255,255,255,.3); }
+  #tools svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #btn-fs { display: none !important; }
+  body.can-fs:not(.is-fs) #btn-fs { display: grid !important; }
+
+  /* Camera flash + toast */
+  #flash { position: fixed; inset: 0; z-index: 20; background: #fff; opacity: 0; pointer-events: none; transition: opacity .35s; }
+  #flash.on { opacity: .8; transition: none; }
+  #toast {
+    position: fixed; z-index: 21; top: calc(16px + env(safe-area-inset-top)); left: 50%; transform: translate(-50%, -20px);
+    background: rgba(20,20,20,.92); color: #fff; padding: 10px 18px; border-radius: 999px; font-size: 15px;
+    opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; white-space: nowrap;
+  }
+  #toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+  /* Portrait hint (game is 4:3 — landscape gives a much bigger picture) */
+  #rotate {
+    position: fixed; z-index: 4; left: 0; right: 0; bottom: calc(70px + env(safe-area-inset-bottom));
+    text-align: center; color: #fff; font-size: 14px; opacity: .65; display: none; pointer-events: none;
+  }
+  @media (orientation: portrait) { body.started #rotate { display: block; } }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<div id="start">
+  <img src="icon-192.png" alt="">
+  <h1>Who Has The<br>Biggest Brain?</h1>
+  <div class="play">▶ שחק</div>
+  <div class="status" id="status">טוען…</div>
+</div>
+
+<div id="tools">
+  <button id="btn-shot" aria-label="צילום מסך ושיתוף" title="צילום מסך ושיתוף">
+    <svg viewBox="0 0 24 24"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+  </button>
+  <button id="btn-link" aria-label="שלח לחבר" title="שלח לחבר">
+    <svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="M8.2 10.8l7.6-4.4M8.2 13.2l7.6 4.4"/></svg>
+  </button>
+  <button id="btn-fs" aria-label="מסך מלא" title="מסך מלא">
+    <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+  </button>
+</div>
+
+<div id="rotate">⟳ סובבו את הטלפון לרוחב למסך גדול יותר</div>
+<div id="flash"></div>
+<div id="toast"></div>
+
+<script>
+  // The game file is streamed from the Internet Archive (https://archive.org/details/whtbb),
+  // so this app never hosts it. A local copy is used only as a fallback.
+  const SWF_URLS = [
+    "https://archive.org/cors/whtbb/brain_game_2_6_7_translated_v1.swf",
+    "game.swf",
+  ];
+  const TITLE = "Who Has The Biggest Brain?";
+
+  window.RufflePlayer = window.RufflePlayer || {};
+  window.RufflePlayer.config = {
+    publicPath: "./",
+    polyfills: false,
+    autoplay: "on",
+    unmuteOverlay: "hidden",
+    splashScreen: false,
+    letterbox: "on",
+    contextMenu: "off",
+    backgroundColor: "#000000",
+    quality: "high",
+    // WebGL keeps screenshots reliable across phones (WebGPU canvases can read back empty)
+    preferredRenderer: "webgl",
+    allowScriptAccess: false,
+    logLevel: "error",
+    showSwfDownload: false,
+    openUrlMode: "deny",
+  };
+</script>
+<script src="ruffle.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  const start = $("start");
+  const root = document.documentElement;
+
+  const player = window.RufflePlayer.newest().createPlayer();
+  $("stage").appendChild(player);
+
+  async function loadGame() {
+    for (const url of SWF_URLS) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(res.status);
+        const data = await res.arrayBuffer();
+        await player.ruffle().load({ data, swfFileName: "brain_game.swf" });
+        start.classList.add("ready");
+        return;
+      } catch (e) { console.warn("Could not load", url, e); }
+    }
+    $("status").textContent = "שגיאה בטעינת המשחק — בדקו את החיבור לאינטרנט";
+  }
+  loadGame();
+
+  // ---------- Fullscreen / orientation ----------
+  const canFullscreen = !!(root.requestFullscreen || root.webkitRequestFullscreen);
+  const standalone = matchMedia("(display-mode: fullscreen), (display-mode: standalone)").matches;
+  document.body.classList.toggle("can-fs", canFullscreen && !standalone);
+
+  async function goFullscreen() {
+    try {
+      if (!document.fullscreenElement && canFullscreen) {
+        await (root.requestFullscreen ? root.requestFullscreen({ navigationUI: "hide" }) : root.webkitRequestFullscreen());
+      }
+    } catch (_) {}
+    try { await screen.orientation.lock("landscape"); } catch (_) {}
+  }
+  document.addEventListener("fullscreenchange", () =>
+    document.body.classList.toggle("is-fs", !!document.fullscreenElement));
+
+  start.addEventListener("click", () => {
+    goFullscreen();
+    keepAwake();
+    start.remove();
+    document.body.classList.add("started");
+    player.focus();
+  }, { once: true });
+  $("btn-fs").addEventListener("click", goFullscreen);
+
+  // ---------- Toast ----------
+  let toastTimer;
+  function toast(msg) {
+    const t = $("toast");
+    t.textContent = msg;
+    t.classList.add("on");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.remove("on"), 2200);
+  }
+
+  // ---------- Screenshot + share ----------
+  function gameCanvas() {
+    return player.shadowRoot && player.shadowRoot.querySelector("canvas");
+  }
+
+  // Read the canvas right after Ruffle draws a frame, while the WebGL buffer still holds it.
+  function grabFrame(src) {
+    return new Promise((resolve) => requestAnimationFrame(() => {
+      const c = document.createElement("canvas");
+      c.width = src.width; c.height = src.height;
+      c.getContext("2d").drawImage(src, 0, 0);
+      resolve(c);
+    }));
+  }
+
+  function isBlank(c) {
+    const x = c.getContext("2d");
+    const step = Math.max(1, Math.floor(c.width / 16));
+    for (let px = step / 2; px < c.width; px += step) {
+      for (let py = step / 2; py < c.height; py += step) {
+        const d = x.getImageData(px, py, 1, 1).data;
+        if (d[0] || d[1] || d[2]) return false;
+      }
+    }
+    return true;
+  }
+
+  // Crop away letterbox bars: the game itself is 4:3, centred in the canvas.
+  function cropToGame(c) {
+    const ratio = 4 / 3;
+    let w = c.width, h = c.height;
+    if (w / h > ratio) w = Math.round(h * ratio); else h = Math.round(w / ratio);
+    const sx = Math.round((c.width - w) / 2), sy = Math.round((c.height - h) / 2);
+    return { sx, sy, w, h };
+  }
+
+  function shareUrl() {
+    return location.origin + location.pathname.replace(/index\.html$/, "");
+  }
+
+  function compose(frame) {
+    const { sx, sy, w, h } = cropToGame(frame);
+    const W = 1280, H = 960, BAR = 110;
+    const out = document.createElement("canvas");
+    out.width = W; out.height = H + BAR;
+    const x = out.getContext("2d");
+    x.imageSmoothingQuality = "high";
+    x.drawImage(frame, sx, sy, w, h, 0, 0, W, H);
+
+    const g = x.createLinearGradient(0, H, 0, H + BAR);
+    g.addColorStop(0, "#1b4f55"); g.addColorStop(1, "#0d2b33");
+    x.fillStyle = g; x.fillRect(0, H, W, BAR);
+    x.fillStyle = "#e8447a"; x.fillRect(0, H, W, 6);
+
+    x.fillStyle = "#fff";
+    x.textBaseline = "middle";
+    x.direction = "ltr"; x.textAlign = "left";
+    x.font = "bold 42px system-ui, -apple-system, Roboto, sans-serif";
+    x.fillText("🧠 " + TITLE, 36, H + BAR / 2 + 3);
+
+    x.direction = "rtl"; x.textAlign = "right";
+    x.font = "600 30px system-ui, -apple-system, Roboto, sans-serif";
+    x.fillStyle = "rgba(255,255,255,.85)";
+    x.fillText("מי יעקוף אותי?", W - 36, H + BAR / 2 - 16);
+    x.direction = "ltr";
+    x.font = "24px system-ui, -apple-system, Roboto, sans-serif";
+    x.fillStyle = "rgba(255,255,255,.6)";
+    x.fillText(shareUrl().replace(/^https?:\/\//, ""), W - 36, H + BAR / 2 + 22);
+    return out;
+  }
+
+  async function takeScreenshot() {
+    const src = gameCanvas();
+    if (!src) return toast("המשחק עוד לא נטען");
+
+    let frame;
+    for (let i = 0; i < 4; i++) {
+      frame = await grabFrame(src);
+      if (!isBlank(frame)) break;
+    }
+
+    const f = $("flash");
+    f.classList.add("on");
+    requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove("on")));
+
+    const blob = await new Promise((r) => compose(frame).toBlob(r, "image/png"));
+    const file = new File([blob], "biggest-brain.png", { type: "image/png" });
+    const text = "תראו את התוצאה שלי ב-Who Has The Biggest Brain! 🧠 נסו לעקוף אותי: " + shareUrl();
+
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: TITLE, text });
+        return;
+      } catch (e) {
+        if (e.name === "AbortError") return; // user closed the share sheet
+      }
+    }
+    // Fallback: save the picture
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = file.name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    toast("צילום המסך נשמר 📷");
+  }
+
+  async function shareLink() {
+    const data = { title: TITLE, text: "בוא נראה למי יש את המוח הכי גדול 🧠", url: shareUrl() };
+    if (navigator.share) {
+      try { await navigator.share(data); return; } catch (e) { if (e.name === "AbortError") return; }
+    }
+    try {
+      await navigator.clipboard.writeText(data.text + " " + data.url);
+      toast("הקישור הועתק — הדביקו לחברים");
+    } catch (_) {
+      prompt("העתיקו את הקישור:", data.url);
+    }
+  }
+
+  $("btn-shot").addEventListener("click", takeScreenshot);
+  $("btn-link").addEventListener("click", shareLink);
+
+  // ---------- Misc ----------
+  async function keepAwake() {
+    try { if ("wakeLock" in navigator && document.visibilityState === "visible") await navigator.wakeLock.request("screen"); } catch (_) {}
+  }
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && document.body.classList.contains("started")) keepAwake();
+  });
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+  document.addEventListener("gesturestart", (e) => e.preventDefault());
+
+  if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+</script>
+</body>
+</html>
